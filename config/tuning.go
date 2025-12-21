@@ -86,6 +86,13 @@ var RateLimitJitterPercent = getEnvInt("RATE_LIMIT_JITTER_PERCENT", 30)
 // 当检测到TEMPORARILY_SUSPENDED错误时，token进入长时间冷却
 var SuspendedTokenCooldown = getEnvDuration("SUSPENDED_TOKEN_COOLDOWN", 24*time.Hour)
 
+// ========== 工具限制配置 ==========
+
+// MaxToolDescriptionLength 工具描述的最大长度（字符数，默认：10000）
+// 用于限制 tool description 字段的长度
+// 防止超长内容导致上游 API 错误
+var MaxToolDescriptionLength = getEnvInt("MAX_TOOL_DESCRIPTION_LENGTH", 10000)
+
 // ========== 辅助函数 ==========
 
 // getEnvDuration 从环境变量读取时间间隔，支持格式如 "5s", "1m", "2h"

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"kiro2api/config"
 	"kiro2api/types"
 	"kiro2api/utils"
 )
@@ -50,9 +51,12 @@ func validateAndProcessTools(tools []types.OpenAITool) ([]types.AnthropicTool, e
 			continue
 		}
 
+		// 截断工具描述长度，防止超长内容导致上游 API 错误
+		description := truncateToolDescription(tool.Function.Description)
+
 		anthropicTool := types.AnthropicTool{
 			Name:        tool.Function.Name,
-			Description: tool.Function.Description,
+			Description: description,
 			InputSchema: cleanedParams,
 		}
 		anthropicTools = append(anthropicTools, anthropicTool)
@@ -63,6 +67,27 @@ func validateAndProcessTools(tools []types.OpenAITool) ([]types.AnthropicTool, e
 	}
 
 	return anthropicTools, nil
+}
+
+// truncateToolDescription 截断工具描述长度
+// 使用 config.MaxToolDescriptionLength 配置的最大长度
+func truncateToolDescription(description string) string {
+	maxLen := config.MaxToolDescriptionLength
+	if maxLen <= 0 {
+		// 如果配置为0或负数，不进行截断
+		return description
+	}
+
+	if len(description) <= maxLen {
+		return description
+	}
+
+	// 截断并添加省略标记
+	// 保留最后3个字符用于 "..."
+	if maxLen > 3 {
+		return description[:maxLen-3] + "..."
+	}
+	return description[:maxLen]
 }
 
 // cleanAndValidateToolParameters 清理和验证工具参数

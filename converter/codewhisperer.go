@@ -202,6 +202,26 @@ func extractToolResultsFromMessage(content any) []types.ToolResult {
 	return toolResults
 }
 
+// truncateDescription 截断描述长度，防止超长内容导致上游 API 错误
+func truncateDescription(description string) string {
+	maxLen := config.MaxToolDescriptionLength
+	if maxLen <= 0 {
+		// 如果配置为0或负数，不进行截断
+		return description
+	}
+
+	if len(description) <= maxLen {
+		return description
+	}
+
+	// 截断并添加省略标记
+	// 保留最后3个字符用于 "..."
+	if maxLen > 3 {
+		return description[:maxLen-3] + "..."
+	}
+	return description[:maxLen]
+}
+
 // BuildCodeWhispererRequest 构建 CodeWhisperer 请求
 func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Context) (types.CodeWhispererRequest, error) {
 	// logger.Debug("构建CodeWhisperer请求", logger.String("profile_arn", profileArn))
@@ -321,7 +341,8 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 			// 根据req.json的实际结构，确保JSON Schema完整性
 			cwTool := types.CodeWhispererTool{}
 			cwTool.ToolSpecification.Name = tool.Name
-			cwTool.ToolSpecification.Description = tool.Description
+			// 截断工具描述长度，防止超长内容导致上游 API 错误
+			cwTool.ToolSpecification.Description = truncateDescription(tool.Description)
 
 			// 直接使用原始的InputSchema，避免过度处理 (恢复v0.4兼容性)
 			cwTool.ToolSpecification.InputSchema = types.InputSchema{
@@ -448,9 +469,48 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 		}
 
 		// 处理结尾的孤立user消息（理论上不应该存在，因为最后一条已经是current message）
-		// 但为了安全起见，如果有剩余的user消息缓冲区，记录警告
+		// 修复：合并孤立的user消息并添加占位assistant回复以保持配对
 		if len(userMessagesBuffer) > 0 {
-			logger.Warn("历史消息末尾存在孤立的user消息（未配对assistant）",
+			// 合并所有孤立的user消息
+			mergedUserMsg := types.HistoryUserMessage{}
+			var contentParts []string
+			var allImages []types.CodeWhispererImage
+			var allToolResults []types.ToolResult
+
+			for _, userMsg := range userMessagesBuffer {
+				messageContent, messageImages, err := processMessageContent(userMsg.Content)
+				if err == nil && messageContent != "" {
+					contentParts = append(contentParts, messageContent)
+					if len(messageImages) > 0 {
+						allImages = append(allImages, messageImages...)
+					}
+				}
+				toolResults := extractToolResultsFromMessage(userMsg.Content)
+				if len(toolResults) > 0 {
+					allToolResults = append(allToolResults, toolResults...)
+				}
+			}
+
+			mergedUserMsg.UserInputMessage.Content = strings.Join(contentParts, "\n")
+			if len(allImages) > 0 {
+				mergedUserMsg.UserInputMessage.Images = allImages
+			}
+			if len(allToolResults) > 0 {
+				mergedUserMsg.UserInputMessage.UserInputMessageContext.ToolResults = allToolResults
+				// 如果包含工具结果，将 content 设置为空字符串
+				mergedUserMsg.UserInputMessage.Content = ""
+			}
+			mergedUserMsg.UserInputMessage.ModelId = modelId
+			mergedUserMsg.UserInputMessage.Origin = "AI_EDITOR"
+			history = append(history, mergedUserMsg)
+
+			// 添加占位的 assistant 回复以保持配对
+			assistantMsg := types.HistoryAssistantMessage{}
+			assistantMsg.AssistantResponseMessage.Content = "OK"
+			assistantMsg.AssistantResponseMessage.ToolUses = nil
+			history = append(history, assistantMsg)
+
+			logger.Debug("为孤立的user消息添加了占位assistant回复",
 				logger.Int("orphan_messages", len(userMessagesBuffer)))
 		}
 
