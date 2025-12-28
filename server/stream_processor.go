@@ -44,6 +44,9 @@ type StreamProcessorContext struct {
 	// 工具调用跟踪
 	toolUseIdByBlockIndex map[int]string
 	completedToolUseIds   map[string]bool // 已完成的工具ID集合（用于stop_reason判断）
+
+	// Thinking 状态机（借鉴 kiro.rs）
+	thinkingContext *parser.ThinkingStreamContext
 }
 
 // NewStreamProcessorContext 创建流处理上下文
@@ -55,6 +58,9 @@ func NewStreamProcessorContext(
 	messageID string,
 	inputTokens int,
 ) *StreamProcessorContext {
+	// 判断是否启用 thinking（借鉴 kiro.rs）
+	thinkingEnabled := req.Thinking != nil && req.Thinking.Type == "enabled"
+
 	return &StreamProcessorContext{
 		c:                     c,
 		req:                   req,
@@ -68,6 +74,7 @@ func NewStreamProcessorContext(
 		compliantParser:       parser.NewCompliantEventStreamParser(),
 		toolUseIdByBlockIndex: make(map[int]string),
 		completedToolUseIds:   make(map[string]bool),
+		thinkingContext:       parser.NewThinkingStreamContext(thinkingEnabled),
 	}
 }
 
@@ -100,6 +107,12 @@ func (ctx *StreamProcessorContext) Cleanup() {
 	ctx.sseStateManager = nil
 	ctx.stopReasonManager = nil
 	ctx.tokenEstimator = nil
+
+	// 重置 thinking 上下文（借鉴 kiro.rs）
+	if ctx.thinkingContext != nil {
+		ctx.thinkingContext.Reset()
+		ctx.thinkingContext = nil
+	}
 }
 
 // initializeSSEResponse 初始化SSE响应头

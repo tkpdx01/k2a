@@ -55,3 +55,15 @@ const (
 	// MinOutputTokens 最小输出token数
 	MinOutputTokens = 1
 )
+
+// Thinking 模式常量（借鉴 kiro.rs）
+const (
+	// ThinkingBudgetTokensMax thinking budget_tokens 上限
+	ThinkingBudgetTokensMax = 24576
+
+	// ThinkingBudgetTokensDefault thinking budget_tokens 默认值
+	ThinkingBudgetTokensDefault = 20000
+
+	// ThinkingBudgetTokensMin thinking budget_tokens 最小值
+	ThinkingBudgetTokensMin = 1024
+)

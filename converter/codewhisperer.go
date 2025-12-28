@@ -356,8 +356,11 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 	}
 
 	// 构建历史消息
-	if len(anthropicReq.System) > 0 || len(anthropicReq.Messages) > 1 || len(anthropicReq.Tools) > 0 {
+	if len(anthropicReq.System) > 0 || len(anthropicReq.Messages) > 1 || len(anthropicReq.Tools) > 0 || anthropicReq.Thinking != nil {
 		var history []any
+
+		// 生成 thinking 前缀（借鉴 kiro.rs）
+		thinkingPrefix := generateThinkingPrefix(anthropicReq.Thinking)
 
 		// 构建综合系统提示
 		var systemContentBuilder strings.Builder
@@ -375,8 +378,18 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 
 		// 如果有系统内容，添加到历史记录 (恢复v0.4结构化类型)
 		if systemContentBuilder.Len() > 0 {
+			systemContent := strings.TrimSpace(systemContentBuilder.String())
+
+			// 注入 thinking 标签到系统消息最前面（借鉴 kiro.rs）
+			// 如果启用了 thinking 且系统消息中不存在 thinking 标签，则注入
+			if thinkingPrefix != "" && !hasThinkingTags(systemContent) {
+				systemContent = thinkingPrefix + "\n" + systemContent
+				logger.Debug("已注入 thinking 标签到系统消息",
+					logger.String("prefix", thinkingPrefix))
+			}
+
 			userMsg := types.HistoryUserMessage{}
-			userMsg.UserInputMessage.Content = strings.TrimSpace(systemContentBuilder.String())
+			userMsg.UserInputMessage.Content = systemContent
 			userMsg.UserInputMessage.ModelId = modelId
 			userMsg.UserInputMessage.Origin = "AI_EDITOR" // v0.4兼容性：固定使用AI_EDITOR
 			history = append(history, userMsg)
@@ -385,6 +398,21 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 			assistantMsg.AssistantResponseMessage.Content = "OK"
 			assistantMsg.AssistantResponseMessage.ToolUses = nil
 			history = append(history, assistantMsg)
+		} else if thinkingPrefix != "" {
+			// 没有系统消息但有 thinking 配置，插入新的系统消息（借鉴 kiro.rs）
+			userMsg := types.HistoryUserMessage{}
+			userMsg.UserInputMessage.Content = thinkingPrefix
+			userMsg.UserInputMessage.ModelId = modelId
+			userMsg.UserInputMessage.Origin = "AI_EDITOR"
+			history = append(history, userMsg)
+
+			assistantMsg := types.HistoryAssistantMessage{}
+			assistantMsg.AssistantResponseMessage.Content = "OK"
+			assistantMsg.AssistantResponseMessage.ToolUses = nil
+			history = append(history, assistantMsg)
+
+			logger.Debug("已插入 thinking 标签作为系统消息",
+				logger.String("prefix", thinkingPrefix))
 		}
 
 		// 然后处理常规消息历史 (修复配对逻辑：合并连续user消息，然后与assistant配对)
@@ -524,14 +552,30 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 			return cwReq, fmt.Errorf("模型 %s 不支持 thinking 模式，仅支持 Claude 3.7 Sonnet 及后续版本", anthropicReq.Model)
 		}
 
+		// 验证 thinking 配置（借鉴 kiro.rs）
+		if err := anthropicReq.Thinking.Validate(); err != nil {
+			return cwReq, fmt.Errorf("thinking 配置验证失败: %v", err)
+		}
+
+		// 规范化 budget_tokens（自动截断超限值，借鉴 kiro.rs）
+		budgetTokens := anthropicReq.Thinking.NormalizeBudgetTokens()
+
+		// 如果值被调整，记录日志
+		if budgetTokens != anthropicReq.Thinking.BudgetTokens {
+			logger.Warn("budget_tokens 已自动调整",
+				logger.Int("original", anthropicReq.Thinking.BudgetTokens),
+				logger.Int("adjusted", budgetTokens),
+				logger.Int("max_allowed", config.ThinkingBudgetTokensMax))
+		}
+
 		// 智能调整 max_tokens：确保 max_tokens > budget_tokens
 		// 如果 max_tokens 不足，自动调整为 budget_tokens + 4096（留出足够的输出空间）
 		effectiveMaxTokens := anthropicReq.MaxTokens
-		if effectiveMaxTokens <= anthropicReq.Thinking.BudgetTokens {
-			effectiveMaxTokens = anthropicReq.Thinking.BudgetTokens + 4096
+		if effectiveMaxTokens <= budgetTokens {
+			effectiveMaxTokens = budgetTokens + 4096
 			logger.Warn("自动调整 max_tokens 以满足 thinking 模式要求",
 				logger.Int("original_max_tokens", anthropicReq.MaxTokens),
-				logger.Int("budget_tokens", anthropicReq.Thinking.BudgetTokens),
+				logger.Int("budget_tokens", budgetTokens),
 				logger.Int("adjusted_max_tokens", effectiveMaxTokens))
 		}
 
@@ -545,7 +589,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 			MaxTokens: effectiveMaxTokens,
 			Thinking: &types.CodeWhispererThinking{
 				Type:         "enabled",
-				BudgetTokens: anthropicReq.Thinking.BudgetTokens,
+				BudgetTokens: budgetTokens,
 			},
 		}
 
@@ -556,7 +600,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 
 		logger.Debug("已启用 thinking 模式",
 			logger.String("model", anthropicReq.Model),
-			logger.Int("budget_tokens", anthropicReq.Thinking.BudgetTokens),
+			logger.Int("budget_tokens", budgetTokens),
 			logger.Int("max_tokens", effectiveMaxTokens))
 	}
 
@@ -650,6 +694,21 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 	}
 
 	return toolUses
+}
+
+// generateThinkingPrefix 生成 thinking 标签前缀（借鉴 kiro.rs）
+// 当 thinking 启用时，在系统消息最前面注入标签，确保上游正确识别 thinking 模式
+func generateThinkingPrefix(thinking *types.Thinking) string {
+	if thinking == nil || thinking.Type != "enabled" {
+		return ""
+	}
+	budgetTokens := thinking.NormalizeBudgetTokens()
+	return fmt.Sprintf("<thinking_mode>enabled</thinking_mode><max_thinking_length>%d</max_thinking_length>", budgetTokens)
+}
+
+// hasThinkingTags 检查内容是否已包含 thinking 标签（避免重复注入）
+func hasThinkingTags(content string) bool {
+	return strings.Contains(content, "<thinking_mode>") || strings.Contains(content, "<max_thinking_length>")
 }
 
 // isThinkingCompatibleModel 检查模型是否支持 thinking 模式

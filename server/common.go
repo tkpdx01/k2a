@@ -15,6 +15,7 @@ import (
 	"kiro2api/utils"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // getRequestFingerprint 从上下文获取请求指纹
@@ -161,26 +162,29 @@ func buildCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicReque
 		req.Header.Set("Accept", "*/*")
 	}
 
-	// 添加上游请求必需的header
-	req.Header.Set("x-amzn-kiro-agent-mode", "spec")
-	
+	// 添加上游请求必需的header（借鉴 kiro.rs）
+	req.Header.Set("x-amzn-kiro-agent-mode", "vibe") // kiro.rs 使用 "vibe"
+	req.Header.Set("x-amzn-codewhisperer-optout", "true") // 借鉴 kiro.rs
+	req.Header.Set("amz-sdk-invocation-id", uuid.New().String()) // 借鉴 kiro.rs：请求追踪ID
+	req.Header.Set("amz-sdk-request", "attempt=1; max=3") // 借鉴 kiro.rs：重试配置
+
 	// 使用指纹管理器获取随机化的请求头
 	fingerprint := getRequestFingerprint(c)
 	if fingerprint != nil {
 		// 应用完整指纹（包括UA、Accept-Language、Sec-Fetch等）
 		fingerprint.ApplyToRequest(req)
-		
+
 		logger.Debug("应用请求指纹",
 			logger.String("os", fingerprint.OSType),
 			logger.String("locale", fingerprint.Locale),
 			logger.String("sdk", fingerprint.SDKVersion))
 	} else {
-		// 降级到默认值
-		req.Header.Set("x-amz-user-agent", "aws-sdk-js/1.0.18 KiroIDE-0.2.13-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1")
-		req.Header.Set("user-agent", "aws-sdk-js/1.0.18 ua/2.1 os/darwin#25.0.0 lang/js md/nodejs#20.16.0 api/codewhispererstreaming#1.0.18 m/E KiroIDE-0.2.13-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1")
+		// 降级到默认值（借鉴 kiro.rs 升级 SDK 版本）
+		req.Header.Set("x-amz-user-agent", "aws-sdk-js/1.0.27 KiroIDE-0.8.0-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1")
+		req.Header.Set("user-agent", "aws-sdk-js/1.0.27 ua/2.1 os/darwin#25.0.0 lang/js md/nodejs#20.16.0 api/codewhispererstreaming#1.0.27 m/E KiroIDE-0.8.0-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1")
 		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 		req.Header.Set("Accept-Encoding", "gzip, deflate, br")
-		req.Header.Set("Connection", "keep-alive")
+		req.Header.Set("Connection", "close") // 借鉴 kiro.rs 使用 close
 	}
 
 	return req, nil

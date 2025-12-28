@@ -12,7 +12,37 @@ import (
 // - KISS: 简单高效的估算算法，避免引入复杂的tokenizer库
 // - 向后兼容: 支持所有Claude模型和消息格式
 // - 性能优先: 本地计算，响应时间<5ms
+// - 借鉴 kiro.rs: 使用字符单位计算和短文本修正系数
 type TokenEstimator struct{}
+
+// isNonWesternChar 判断字符是否为非西文字符（借鉴 kiro.rs）
+// 西文字符包括：
+// - ASCII 字符 (U+0000..U+007F)
+// - 拉丁字母扩展 (U+0080..U+024F)
+// - 拉丁字母扩展附加 (U+1E00..U+1EFF)
+// - 拉丁字母扩展-C/D/E
+// 返回 true 表示该字符是非西文字符（如中文、日文、韩文、阿拉伯文等）
+func isNonWesternChar(r rune) bool {
+	// 西文字符范围
+	switch {
+	case r >= 0x0000 && r <= 0x007F: // 基本 ASCII
+		return false
+	case r >= 0x0080 && r <= 0x00FF: // 拉丁字母扩展-A
+		return false
+	case r >= 0x0100 && r <= 0x024F: // 拉丁字母扩展-B
+		return false
+	case r >= 0x1E00 && r <= 0x1EFF: // 拉丁字母扩展附加
+		return false
+	case r >= 0x2C60 && r <= 0x2C7F: // 拉丁字母扩展-C
+		return false
+	case r >= 0xA720 && r <= 0xA7FF: // 拉丁字母扩展-D
+		return false
+	case r >= 0xAB30 && r <= 0xAB6F: // 拉丁字母扩展-E
+		return false
+	default:
+		return true // 非西文字符
+	}
+}
 
 // NewTokenEstimator 创建token估算器实例
 func NewTokenEstimator() *TokenEstimator {
@@ -183,11 +213,12 @@ func (e *TokenEstimator) estimateToolName(name string) int {
 	return totalTokens
 }
 
-// EstimateTextTokens 估算纯文本的token数量
-// 混合语言处理：
-// - 检测中文字符比例
-// - 中文: 1.5字符/token（汉字信息密度高）
-// - 英文: 4字符/token（标准GPT tokenizer比率）
+// EstimateTextTokens 估算纯文本的token数量（借鉴 kiro.rs 算法）
+// 算法说明（来自 kiro.rs）：
+// - 非西文字符：每个计 4.0 个字符单位
+// - 西文字符：每个计 1.0 个字符单位
+// - 4 个字符单位 = 1 token
+// - 短文本修正系数：放大估算值以补偿 BPE 编码开销
 func (e *TokenEstimator) EstimateTextTokens(text string) int {
 	if text == "" {
 		return 0
@@ -195,96 +226,51 @@ func (e *TokenEstimator) EstimateTextTokens(text string) int {
 
 	// 转换为rune数组以正确计算Unicode字符数
 	runes := []rune(text)
-	runeCount := len(runes)
-
-	if runeCount == 0 {
+	if len(runes) == 0 {
 		return 0
 	}
 
-	// 统计中文字符数（扫描全部字符）
-	chineseChars := 0
+	// 计算字符单位（借鉴 kiro.rs）
+	// 非西文字符：4.0 单位
+	// 西文字符：1.0 单位
+	var charUnits float64
 	for _, r := range runes {
-		// 中文字符范围（CJK统一汉字）
-		if r >= 0x4E00 && r <= 0x9FFF {
-			chineseChars++
-		}
-	}
-
-	// 混合语言token估算
-	// 根据官方测试数据精确校准：
-	// 纯中文: '你'(1字符)→2tokens, '你好'(2字符)→3tokens
-	// 混合: '你好hello'(2中+5英)→4tokens = 2中文 + 2英文
-	// 结论: 纯中文有基础开销，混合文本无额外开销
-
-	nonChineseChars := runeCount - chineseChars
-
-	// 判断是否为纯中文
-	isPureChinese := (nonChineseChars == 0)
-
-	// 中文token计算
-	chineseTokens := 0
-	if chineseChars > 0 {
-		if isPureChinese {
-			chineseTokens = 1 + chineseChars // 纯中文: 基础1 + 字符数
+		if isNonWesternChar(r) {
+			charUnits += 4.0
 		} else {
-			chineseTokens = chineseChars // 混合文本: 仅字符数
+			charUnits += 1.0
 		}
 	}
 
-	// 英文/数字字符密度优化
-	// 短期优化: 进一步调整以降低纯英文误差
-	nonChineseTokens := 0
-	if nonChineseChars > 0 {
-		// 根据文本长度动态调整字符密度
-		var charsPerToken float64
-		if nonChineseChars < 50 {
-			// 超短文本(1-50字符): 密度低(分词多)
-			charsPerToken = 2.8
-		} else if nonChineseChars < 100 {
-			// 短文本(50-100字符): 标准密度
-			charsPerToken = 2.6
-		} else {
-			// 中长文本(100+字符): 密度高(更多常见词)
-			charsPerToken = 2.5
-		}
+	// 基础 token 计算：4 个字符单位 = 1 token
+	tokens := charUnits / 4.0
 
-		nonChineseTokens = int(float64(nonChineseChars) / charsPerToken)
-		if nonChineseTokens < 1 {
-			nonChineseTokens = 1 // 至少1 token
-		}
+	// 短文本修正系数（借鉴 kiro.rs）
+	// 原因：BPE 编码对短文本的 token 密度较低，需要放大估算值
+	var adjustedTokens float64
+	if tokens < 100 {
+		// 超短文本：× 1.5
+		adjustedTokens = tokens * 1.5
+	} else if tokens < 200 {
+		// 短文本：× 1.3
+		adjustedTokens = tokens * 1.3
+	} else if tokens < 300 {
+		// 中短文本：× 1.25
+		adjustedTokens = tokens * 1.25
+	} else if tokens < 800 {
+		// 中等文本：× 1.2
+		adjustedTokens = tokens * 1.2
+	} else {
+		// 长文本：不调整
+		adjustedTokens = tokens
 	}
 
-	tokens := chineseTokens + nonChineseTokens
-
-	// 长文本压缩系数 (短期优化: 细化阈值)
-	// 原因: BPE编码的token密度随文本长度增长而提高
-	// 新增分段: 50/100/200/300/500/1000字符
-	if runeCount >= config.LongTextThreshold {
-		// 超长文本(1000+字符): 压缩40%
-		tokens = int(float64(tokens) * 0.60)
-	} else if runeCount >= 500 {
-		// 长文本(500-1000字符): 压缩30%
-		tokens = int(float64(tokens) * 0.70)
-	} else if runeCount >= 300 {
-		// 中长文本(300-500字符): 压缩20%
-		tokens = int(float64(tokens) * 0.80)
-	} else if runeCount >= 200 {
-		// 中等文本(200-300字符): 压缩15%
-		tokens = int(float64(tokens) * 0.85)
-	} else if runeCount >= config.ShortTextThreshold {
-		// 较长文本(100-200字符): 压缩10%
-		tokens = int(float64(tokens) * 0.90)
-	} else if runeCount >= 50 {
-		// 普通文本(50-100字符): 压缩5%
-		tokens = int(float64(tokens) * 0.95)
-	}
-	// <50字符: 不压缩
-
-	if tokens < 1 {
-		tokens = 1 // 最少1个token
+	result := int(adjustedTokens)
+	if result < 1 {
+		result = 1 // 最少1个token
 	}
 
-	return tokens
+	return result
 }
 
 // estimateContentBlock 估算单个内容块的token数量（通用map格式）
