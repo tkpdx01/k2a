@@ -17,6 +17,8 @@ type CompliantMessageProcessor struct {
 	// 运行时状态：跟踪已开始的工具与其内容块索引，用于按增量输出
 	startedTools   map[string]bool
 	toolBlockIndex map[string]int
+	// Thinking 流式上下文（借鉴 kiro.rs）
+	thinkingContext *ThinkingStreamContext
 }
 
 // EventHandler 事件处理器接口
@@ -64,6 +66,20 @@ func (cmp *CompliantMessageProcessor) Reset() {
 	if cmp.legacyToolState != nil {
 		cmp.legacyToolState.fullReset()
 	}
+	// 重置 thinking 上下文
+	if cmp.thinkingContext != nil {
+		cmp.thinkingContext.Reset()
+	}
+}
+
+// SetThinkingContext 设置 thinking 流式上下文
+func (cmp *CompliantMessageProcessor) SetThinkingContext(ctx *ThinkingStreamContext) {
+	cmp.thinkingContext = ctx
+}
+
+// GetThinkingContext 获取 thinking 流式上下文
+func (cmp *CompliantMessageProcessor) GetThinkingContext() *ThinkingStreamContext {
+	return cmp.thinkingContext
 }
 
 // registerEventHandlers 注册所有事件处理器

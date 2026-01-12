@@ -367,16 +367,107 @@ func (h *StandardAssistantResponseEventHandler) handleToolCallEvent(message *Eve
 // handleStreamingEvent 处理流式事件
 func (h *StandardAssistantResponseEventHandler) handleStreamingEvent(event *FullAssistantResponseEvent) ([]SSEEvent, error) {
 	// 处理流式响应事件
-	var events []SSEEvent // 提取内容
-	if event.Content != "" {
+	if event.Content == "" {
+		return []SSEEvent{}, nil
+	}
+
+	// 如果启用了 thinking 模式，使用 ThinkingStreamContext 处理
+	thinkingCtx := h.processor.GetThinkingContext()
+	if thinkingCtx != nil && thinkingCtx.ThinkingEnabled {
+		return h.processContentWithThinking(event.Content, thinkingCtx)
+	}
+
+	// 非 thinking 模式，直接输出 text_delta
+	return []SSEEvent{{
+		Event: "content_block_delta",
+		Data: map[string]any{
+			"type":  "content_block_delta",
+			"index": 0,
+			"delta": map[string]any{
+				"type": "text_delta",
+				"text": event.Content,
+			},
+		},
+	}}, nil
+}
+
+// processContentWithThinking 使用 thinking 上下文处理内容（借鉴 kiro.rs process_content_with_thinking）
+func (h *StandardAssistantResponseEventHandler) processContentWithThinking(content string, ctx *ThinkingStreamContext) ([]SSEEvent, error) {
+	result := ctx.ProcessChunk(content)
+	var events []SSEEvent
+
+	// 处理 thinking 块开始
+	if result.ThinkingStarted {
+		events = append(events, SSEEvent{
+			Event: "content_block_start",
+			Data: map[string]any{
+				"type":  "content_block_start",
+				"index": ctx.GetThinkingBlockIndex(),
+				"content_block": map[string]any{
+					"type":     "thinking",
+					"thinking": "",
+				},
+			},
+		})
+	}
+
+	// 输出 thinking 内容
+	if result.ThinkingContent != "" {
 		events = append(events, SSEEvent{
 			Event: "content_block_delta",
 			Data: map[string]any{
 				"type":  "content_block_delta",
-				"index": 0,
+				"index": ctx.GetThinkingBlockIndex(),
+				"delta": map[string]any{
+					"type":     "thinking_delta",
+					"thinking": result.ThinkingContent,
+				},
+			},
+		})
+	}
+
+	// 处理 thinking 块结束
+	if result.ThinkingEnded {
+		events = append(events, SSEEvent{
+			Event: "content_block_stop",
+			Data: map[string]any{
+				"type":  "content_block_stop",
+				"index": ctx.GetThinkingBlockIndex(),
+			},
+		})
+
+		// thinking 结束后，如果有后续文本，需要开始文本块
+		if result.TextContent != "" {
+			events = append(events, SSEEvent{
+				Event: "content_block_start",
+				Data: map[string]any{
+					"type":  "content_block_start",
+					"index": ctx.GetTextBlockIndex(),
+					"content_block": map[string]any{
+						"type": "text",
+						"text": "",
+					},
+				},
+			})
+		}
+	}
+
+	// 输出文本内容
+	if result.TextContent != "" {
+		// 如果 thinking 已提取完成，使用文本块索引
+		textIndex := 0
+		if ctx.IsThinkingExtracted() {
+			textIndex = ctx.GetTextBlockIndex()
+		}
+
+		events = append(events, SSEEvent{
+			Event: "content_block_delta",
+			Data: map[string]any{
+				"type":  "content_block_delta",
+				"index": textIndex,
 				"delta": map[string]any{
 					"type": "text_delta",
-					"text": event.Content,
+					"text": result.TextContent,
 				},
 			},
 		})

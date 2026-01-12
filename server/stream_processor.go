@@ -61,6 +61,13 @@ func NewStreamProcessorContext(
 	// 判断是否启用 thinking（借鉴 kiro.rs）
 	thinkingEnabled := req.Thinking != nil && req.Thinking.Type == "enabled"
 
+	// 创建 thinking 上下文
+	thinkingContext := parser.NewThinkingStreamContext(thinkingEnabled)
+
+	// 创建 parser 并设置 thinking 上下文
+	compliantParser := parser.NewCompliantEventStreamParser()
+	compliantParser.SetThinkingContext(thinkingContext)
+
 	return &StreamProcessorContext{
 		c:                     c,
 		req:                   req,
@@ -71,10 +78,10 @@ func NewStreamProcessorContext(
 		sseStateManager:       NewSSEStateManager(false),
 		stopReasonManager:     NewStopReasonManager(req),
 		tokenEstimator:        utils.NewTokenEstimator(),
-		compliantParser:       parser.NewCompliantEventStreamParser(),
+		compliantParser:       compliantParser,
 		toolUseIdByBlockIndex: make(map[int]string),
 		completedToolUseIds:   make(map[string]bool),
-		thinkingContext:       parser.NewThinkingStreamContext(thinkingEnabled),
+		thinkingContext:       thinkingContext,
 	}
 }
 
@@ -209,6 +216,17 @@ func (ctx *StreamProcessorContext) processToolUseStop(dataMap map[string]any) {
 
 // sendFinalEvents 发送结束事件
 func (ctx *StreamProcessorContext) sendFinalEvents() error {
+	// 刷新 thinking 缓冲区，确保剩余内容被正确输出
+	if flushEvents := ctx.compliantParser.FlushThinkingBuffer(); len(flushEvents) > 0 {
+		for _, event := range flushEvents {
+			if dataMap, ok := event.Data.(map[string]any); ok {
+				if err := ctx.sseStateManager.SendEvent(ctx.c, ctx.sender, dataMap); err != nil {
+					logger.Error("刷新 thinking 缓冲区事件发送失败", logger.Err(err))
+				}
+			}
+		}
+	}
+
 	// 关闭所有未关闭的content_block
 	activeBlocks := ctx.sseStateManager.GetActiveBlocks()
 	for index, block := range activeBlocks {

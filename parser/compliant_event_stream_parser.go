@@ -24,6 +24,60 @@ func (cesp *CompliantEventStreamParser) SetMaxErrors(maxErrors int) {
 	cesp.robustParser.SetMaxErrors(maxErrors)
 }
 
+// SetThinkingContext 设置 thinking 流式上下文（借鉴 kiro.rs）
+func (cesp *CompliantEventStreamParser) SetThinkingContext(ctx *ThinkingStreamContext) {
+	cesp.messageProcessor.SetThinkingContext(ctx)
+}
+
+// FlushThinkingBuffer 刷新 thinking 缓冲区，返回剩余事件
+// 在流结束时调用，确保缓冲区中的内容被正确输出
+func (cesp *CompliantEventStreamParser) FlushThinkingBuffer() []SSEEvent {
+	ctx := cesp.messageProcessor.GetThinkingContext()
+	if ctx == nil || !ctx.ThinkingEnabled {
+		return nil
+	}
+
+	result := ctx.FlushBuffer()
+	var events []SSEEvent
+
+	// 输出剩余的 thinking 内容
+	if result.ThinkingContent != "" {
+		events = append(events, SSEEvent{
+			Event: "content_block_delta",
+			Data: map[string]any{
+				"type":  "content_block_delta",
+				"index": ctx.GetThinkingBlockIndex(),
+				"delta": map[string]any{
+					"type":     "thinking_delta",
+					"thinking": result.ThinkingContent,
+				},
+			},
+		})
+	}
+
+	// 输出剩余的文本内容
+	if result.TextContent != "" {
+		textIndex := 0
+		if ctx.IsThinkingExtracted() {
+			textIndex = ctx.GetTextBlockIndex()
+		}
+
+		events = append(events, SSEEvent{
+			Event: "content_block_delta",
+			Data: map[string]any{
+				"type":  "content_block_delta",
+				"index": textIndex,
+				"delta": map[string]any{
+					"type": "text_delta",
+					"text": result.TextContent,
+				},
+			},
+		})
+	}
+
+	return events
+}
+
 // Reset 重置解析器状态
 func (cesp *CompliantEventStreamParser) Reset() {
 	cesp.robustParser.Reset()
