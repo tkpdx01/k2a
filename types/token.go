@@ -30,6 +30,16 @@ func (t *Token) IsExpired() bool {
 	return time.Now().After(t.ExpiresAt)
 }
 
+// GetRefreshToken 获取 RefreshToken
+func (t *Token) GetRefreshToken() string {
+	return t.RefreshToken
+}
+
+// GetAccessToken 获取 AccessToken
+func (t *Token) GetAccessToken() string {
+	return t.AccessToken
+}
+
 // 兼容性别名 - 逐步迁移时使用
 type TokenInfo = Token // TokenInfo现在是Token的别名
 // RefreshResponse 统一的token刷新响应结构，支持Social和IdC两种认证方式

@@ -103,7 +103,10 @@ func extractAPIKey(c *gin.Context) string {
 	return apiKey
 }
 
-// validateAPIKey 验证API密钥 - 重构后的版本
+// validateAPIKey 验证API密钥 - 支持多租户模式
+// 支持两种格式：
+// 1. 简单格式: PROXY_API_KEY
+// 2. 组合格式: PROXY_API_KEY:USER_REFRESH_TOKEN（多租户模式）
 func validateAPIKey(c *gin.Context, authToken string) bool {
 	providedApiKey := extractAPIKey(c)
 
@@ -113,7 +116,10 @@ func validateAPIKey(c *gin.Context, authToken string) bool {
 		return false
 	}
 
-	if providedApiKey != authToken {
+	// 解析组合格式
+	proxyKey, userToken := parseAPIKey(providedApiKey)
+
+	if proxyKey != authToken {
 		logger.Error("authToken验证失败",
 			logger.String("expected", "***"),
 			logger.String("provided", "***"))
@@ -121,5 +127,25 @@ func validateAPIKey(c *gin.Context, authToken string) bool {
 		return false
 	}
 
+	// 如果有用户 Token，设置到上下文
+	if userToken != "" {
+		c.Set("userRefreshToken", userToken)
+		c.Set("isMultiTenant", true)
+		logger.Debug("多租户模式：使用用户提供的 RefreshToken")
+	} else {
+		c.Set("isMultiTenant", false)
+	}
+
 	return true
+}
+
+// parseAPIKey 解析 API Key，支持组合格式
+// 返回 (proxyKey, userRefreshToken)
+func parseAPIKey(apiKey string) (string, string) {
+	// 查找第一个冒号
+	idx := strings.Index(apiKey, ":")
+	if idx > 0 && idx < len(apiKey)-1 {
+		return apiKey[:idx], apiKey[idx+1:]
+	}
+	return apiKey, ""
 }

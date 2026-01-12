@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"kiro2api/config"
+	"kiro2api/logger"
 	"kiro2api/types"
 	"kiro2api/utils"
 	"net/http"
@@ -65,6 +66,12 @@ func refreshSocialToken(refreshToken string) (types.TokenInfo, error) {
 
 	var token types.Token
 	token.FromRefreshResponse(refreshResp, refreshToken)
+
+	// 如果响应中包含新的 RefreshToken，使用新的
+	if refreshResp.RefreshToken != "" && refreshResp.RefreshToken != refreshToken {
+		token.RefreshToken = refreshResp.RefreshToken
+		logger.Debug("Social 认证返回了新的 RefreshToken")
+	}
 
 	return token, nil
 }

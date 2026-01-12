@@ -44,6 +44,7 @@ func main() {
 	logger.Info("正在创建AuthService...")
 	authService, err := auth.NewAuthService()
 	if err != nil {
+		// 这种情况不应该发生，因为 NewAuthService 现在总是返回有效实例
 		logger.Error("AuthService创建失败", logger.Err(err))
 		logger.Error("请检查token配置后重新启动服务器")
 		os.Exit(1)

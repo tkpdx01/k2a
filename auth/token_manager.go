@@ -1,10 +1,13 @@
 package auth
 
 import (
+	"encoding/json"
 	"fmt"
 	"kiro2api/config"
 	"kiro2api/logger"
+	"kiro2api/store"
 	"kiro2api/types"
+	"os"
 	"sync"
 	"time"
 )
@@ -313,6 +316,8 @@ func (tm *TokenManager) selectBestTokenWithKeyUnlocked() (*CachedToken, string) 
 func (tm *TokenManager) refreshCacheUnlocked() error {
 	logger.Debug("开始刷新token缓存")
 
+	var refreshedCount int
+
 	for i, cfg := range tm.configs {
 		if cfg.Disabled {
 			continue
@@ -326,6 +331,16 @@ func (tm *TokenManager) refreshCacheUnlocked() error {
 				logger.String("auth_type", cfg.AuthType),
 				logger.Err(err))
 			continue
+		}
+
+		// 检查是否有新的 RefreshToken（Social 认证会返回新的）
+		newRefreshToken := token.GetRefreshToken()
+		if newRefreshToken != "" && newRefreshToken != cfg.RefreshToken {
+			logger.Debug("检测到新的 RefreshToken",
+				logger.Int("config_index", i),
+				logger.String("source_type", cfg.sourceType))
+			tm.configs[i].RefreshToken = newRefreshToken
+			refreshedCount++
 		}
 
 		// 检查使用限制
@@ -355,6 +370,16 @@ func (tm *TokenManager) refreshCacheUnlocked() error {
 	}
 
 	tm.lastRefresh = time.Now()
+
+	// 如果有 Token 被刷新，异步回写配置
+	if refreshedCount > 0 {
+		go func() {
+			if err := tm.PersistCredentials(); err != nil {
+				logger.Warn("Token 回写失败", logger.Err(err))
+			}
+		}()
+	}
+
 	return nil
 }
 
@@ -409,4 +434,143 @@ func generateConfigOrder(configs []AuthConfig) []string {
 		logger.Any("order", order))
 
 	return order
+}
+
+// PersistCredentials 将刷新后的 Token 回写到配置源
+// 支持两种来源：store（Web 管理）和 file（配置文件）
+func (tm *TokenManager) PersistCredentials() error {
+	tm.mutex.RLock()
+	configs := tm.configs
+	tm.mutex.RUnlock()
+
+	var persistedStore, persistedFile int
+
+	for i, cfg := range configs {
+		// 获取缓存中的最新 Token
+		cacheKey := fmt.Sprintf(config.TokenCacheKeyFormat, i)
+		tm.mutex.RLock()
+		cached, exists := tm.cache.tokens[cacheKey]
+		tm.mutex.RUnlock()
+
+		if !exists || cached == nil {
+			continue
+		}
+
+		newRefreshToken := cached.Token.GetRefreshToken()
+		if newRefreshToken == "" || newRefreshToken == cfg.RefreshToken {
+			continue // 没有新的 RefreshToken 或未变化
+		}
+
+		// 根据来源类型回写
+		switch cfg.sourceType {
+		case "store":
+			if err := tm.persistToStore(cfg.storeID, newRefreshToken); err != nil {
+				logger.Warn("回写到 store 失败",
+					logger.String("store_id", cfg.storeID),
+					logger.Err(err))
+			} else {
+				persistedStore++
+			}
+
+		case "file":
+			// 文件回写在循环结束后统一处理
+		}
+
+		// 更新内存中的配置
+		tm.mutex.Lock()
+		tm.configs[i].RefreshToken = newRefreshToken
+		tm.mutex.Unlock()
+	}
+
+	// 回写到配置文件（如果有）
+	if globalConfigMetadata.FilePath != "" && globalConfigMetadata.IsMultiFormat {
+		if err := tm.persistToFile(); err != nil {
+			logger.Warn("回写到配置文件失败",
+				logger.String("path", globalConfigMetadata.FilePath),
+				logger.Err(err))
+		} else {
+			persistedFile++
+		}
+	}
+
+	if persistedStore > 0 || persistedFile > 0 {
+		logger.Info("Token 配置已回写",
+			logger.Int("store_count", persistedStore),
+			logger.Int("file_persisted", persistedFile))
+	}
+
+	return nil
+}
+
+// persistToStore 回写到 store
+func (tm *TokenManager) persistToStore(storeID, newRefreshToken string) error {
+	s := store.GetStore()
+	if s == nil {
+		return fmt.Errorf("store 未初始化")
+	}
+
+	_, err := s.UpdateToken(storeID, store.TokenConfig{
+		RefreshToken: newRefreshToken,
+	})
+	return err
+}
+
+// persistToFile 回写到配置文件
+func (tm *TokenManager) persistToFile() error {
+	if globalConfigMetadata.FilePath == "" {
+		return nil
+	}
+
+	if !globalConfigMetadata.IsMultiFormat {
+		logger.Debug("单凭据格式不支持回写")
+		return nil
+	}
+
+	tm.mutex.RLock()
+	defer tm.mutex.RUnlock()
+
+	// 收集所有来自文件的配置
+	var fileConfigs []AuthConfig
+	for _, cfg := range tm.configs {
+		if cfg.sourceType == "file" {
+			fileConfigs = append(fileConfigs, cfg)
+		}
+	}
+
+	if len(fileConfigs) == 0 {
+		return nil
+	}
+
+	// 序列化为 pretty JSON
+	data, err := json.MarshalIndent(fileConfigs, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化配置失败: %w", err)
+	}
+
+	// 原子写入（先写临时文件，再重命名）
+	tmpPath := globalConfigMetadata.FilePath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return fmt.Errorf("写入临时文件失败: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, globalConfigMetadata.FilePath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("重命名文件失败: %w", err)
+	}
+
+	logger.Debug("配置文件已回写",
+		logger.String("path", globalConfigMetadata.FilePath),
+		logger.Int("config_count", len(fileConfigs)))
+
+	return nil
+}
+
+// UpdateConfigRefreshToken 更新指定配置的 RefreshToken（供 refresh.go 调用）
+func (tm *TokenManager) UpdateConfigRefreshToken(index int, newRefreshToken string) {
+	tm.mutex.Lock()
+	defer tm.mutex.Unlock()
+
+	if index >= 0 && index < len(tm.configs) {
+		tm.configs[index].RefreshToken = newRefreshToken
+	}
 }

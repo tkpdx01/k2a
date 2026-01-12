@@ -369,11 +369,29 @@ type RequestContext struct {
 }
 
 // GetTokenAndBody 通用的token获取和请求体读取
+// 支持多租户模式：如果上下文中有 userRefreshToken，则使用用户的 Token
 // 返回: tokenInfo, requestBody, error
 func (rc *RequestContext) GetTokenAndBody() (types.TokenInfo, []byte, error) {
 	var tokenInfo types.TokenInfo
 	var err error
-	
+
+	// 检查是否为多租户模式
+	if userToken, exists := rc.GinContext.Get("userRefreshToken"); exists {
+		if refreshToken, ok := userToken.(string); ok && refreshToken != "" {
+			// 多租户模式：使用用户提供的 RefreshToken
+			logger.Debug("多租户模式：使用用户 RefreshToken")
+			tokenInfo, err = auth.GetUserTokenCache().GetOrRefresh(refreshToken)
+			if err != nil {
+				logger.Error("刷新用户 Token 失败", logger.Err(err))
+				respondError(rc.GinContext, http.StatusUnauthorized, "用户 Token 无效: %v", err)
+				return types.TokenInfo{}, nil, err
+			}
+			// 多租户模式不使用指纹
+			goto readBody
+		}
+	}
+
+	// 标准模式：使用服务端配置的 Token
 	// 尝试使用带指纹的方法获取token
 	if authWithFp, ok := rc.AuthService.(AuthServiceWithFingerprint); ok {
 		var fingerprint *auth.Fingerprint
@@ -389,13 +407,14 @@ func (rc *RequestContext) GetTokenAndBody() (types.TokenInfo, []byte, error) {
 		// 降级到普通方法
 		tokenInfo, err = rc.AuthService.GetToken()
 	}
-	
+
 	if err != nil {
 		logger.Error("获取token失败", logger.Err(err))
 		respondError(rc.GinContext, http.StatusInternalServerError, "获取token失败: %v", err)
 		return types.TokenInfo{}, nil, err
 	}
 
+readBody:
 	// 读取请求体
 	body, err := rc.GinContext.GetRawData()
 	if err != nil {

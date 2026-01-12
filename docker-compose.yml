@@ -19,6 +19,13 @@ services:
       - LOG_CONSOLE=${LOG_CONSOLE:-true}
       - LOG_FILE=${LOG_FILE:-}
 
+      # 代理配置（支持 HTTP/HTTPS/SOCKS5）
+      # 示例: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080
+      - PROXY_URL=${PROXY_URL:-}
+
+      # 管理面板数据存储路径
+      - K2A_ADMIN_DATA=/data/admin_data.json
+
       # 频率限制/防封号调优（从 .env 注入）
       - RATE_LIMIT_GLOBAL_MIN_INTERVAL=${RATE_LIMIT_GLOBAL_MIN_INTERVAL:-70ms}
       - RATE_LIMIT_MAX_CONSECUTIVE=${RATE_LIMIT_MAX_CONSECUTIVE:-1}
@@ -33,6 +40,7 @@ services:
       - SUSPENDED_TOKEN_COOLDOWN=${SUSPENDED_TOKEN_COOLDOWN:-12h}
     volumes:
       - aws_sso_cache:/home/appuser/.aws/sso/cache
+      - k2a_data:/data
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/v1/models"]
       interval: 30s
@@ -42,3 +50,4 @@ services:
 
 volumes:
   aws_sso_cache:
+  k2a_data:
