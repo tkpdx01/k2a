@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/bytedance/sonic v1.14.1
 	github.com/gin-gonic/gin v1.11.0
+	github.com/google/uuid v1.3.0
 	github.com/pkoukk/tiktoken-go v0.1.7
 	github.com/stretchr/testify v1.11.1
 )
@@ -14,7 +15,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
-	github.com/google/uuid v1.3.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.55.0 // indirect
@@ -45,7 +45,7 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
 	golang.org/x/arch v0.21.0 // indirect
-	golang.org/x/crypto v0.42.0 // indirect
+	golang.org/x/crypto v0.42.0
 	golang.org/x/net v0.44.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
