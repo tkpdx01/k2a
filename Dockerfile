@@ -1,31 +1,16 @@
-# 预编译版 Dockerfile - 直接使用仓库中的二进制文件
-# 构建速度极快，适合 Zeabur 等云平台
+# 预编译版 Dockerfile - 使用静态编译的二进制文件
+# 无需安装任何依赖，构建速度极快
 
-FROM debian:bookworm-slim
-
-# 安装运行时依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    tzdata \
-    && rm -rf /var/lib/apt/lists/*
-
-# 创建非 root 用户
-RUN groupadd -g 1001 appgroup && \
-    useradd -u 1001 -g appgroup -m appuser
+FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /app
 
 # 复制预编译的二进制文件和静态资源
-COPY dist/kiro2api-linux-amd64 ./kiro2api
-COPY static ./static
+COPY dist/kiro2api-linux-amd64 /app/kiro2api
+COPY static /app/static
 
-# 创建数据目录并设置权限
-RUN mkdir -p /app/data && \
-    chmod +x /app/kiro2api && \
-    chown -R appuser:appgroup /app
-
-USER appuser
+# distroless 镜像默认使用 nonroot 用户 (uid 65532)
 
 EXPOSE 8080
 
-CMD ["./kiro2api"]
+ENTRYPOINT ["/app/kiro2api"]
