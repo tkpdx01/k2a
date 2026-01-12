@@ -509,3 +509,171 @@ func (s *Store) GetTokenStats() map[string]int {
 
 	return stats
 }
+
+// === 导出/导入功能 ===
+
+// ExportData 导出数据结构（用于导出配置）
+type ExportData struct {
+	Version   string        `json:"version"`
+	ExportAt  string        `json:"exportAt"`
+	Tokens    []TokenConfig `json:"tokens"`
+	TokensCount int         `json:"tokensCount"`
+}
+
+// ExportConfig 导出配置（不包含敏感的会话信息和密码哈希）
+func (s *Store) ExportConfig() *ExportData {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// 复制 tokens
+	tokens := make([]TokenConfig, len(s.data.Tokens))
+	copy(tokens, s.data.Tokens)
+
+	return &ExportData{
+		Version:     "1.0",
+		ExportAt:    time.Now().Format(time.RFC3339),
+		Tokens:      tokens,
+		TokensCount: len(tokens),
+	}
+}
+
+// ImportData 导入数据结构
+type ImportData struct {
+	Version string        `json:"version"`
+	Tokens  []TokenConfig `json:"tokens"`
+}
+
+// ImportResult 导入结果
+type ImportResult struct {
+	TokensAdded   int      `json:"tokensAdded"`
+	TokensSkipped int      `json:"tokensSkipped"`
+	TokensUpdated int      `json:"tokensUpdated"`
+	Errors        []string `json:"errors,omitempty"`
+}
+
+// ImportConfig 导入配置
+// mode: "merge" - 合并（跳过已存在的）, "replace" - 替换所有, "update" - 更新已存在的
+func (s *Store) ImportConfig(data *ImportData, mode string) *ImportResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result := &ImportResult{
+		Errors: []string{},
+	}
+
+	now := time.Now().Format(time.RFC3339)
+
+	switch mode {
+	case "replace":
+		// 替换模式：清空现有 tokens，导入新的
+		s.data.Tokens = []TokenConfig{}
+		for _, token := range data.Tokens {
+			if token.RefreshToken == "" {
+				result.Errors = append(result.Errors, fmt.Sprintf("跳过无效 token: %s", token.Name))
+				result.TokensSkipped++
+				continue
+			}
+			if token.ID == "" {
+				token.ID = generateTokenID()
+			}
+			if token.AuthType == "" {
+				token.AuthType = "Social"
+			}
+			token.CreatedAt = now
+			token.UpdatedAt = now
+			s.data.Tokens = append(s.data.Tokens, token)
+			result.TokensAdded++
+		}
+
+	case "update":
+		// 更新模式：更新已存在的，添加新的
+		existingMap := make(map[string]int) // refreshToken -> index
+		for i, t := range s.data.Tokens {
+			existingMap[t.RefreshToken] = i
+		}
+
+		for _, token := range data.Tokens {
+			if token.RefreshToken == "" {
+				result.Errors = append(result.Errors, fmt.Sprintf("跳过无效 token: %s", token.Name))
+				result.TokensSkipped++
+				continue
+			}
+
+			if idx, exists := existingMap[token.RefreshToken]; exists {
+				// 更新已存在的
+				if token.Name != "" {
+					s.data.Tokens[idx].Name = token.Name
+				}
+				if token.AuthType != "" {
+					s.data.Tokens[idx].AuthType = token.AuthType
+				}
+				if token.ClientID != "" {
+					s.data.Tokens[idx].ClientID = token.ClientID
+				}
+				if token.ClientSecret != "" {
+					s.data.Tokens[idx].ClientSecret = token.ClientSecret
+				}
+				s.data.Tokens[idx].Disabled = token.Disabled
+				s.data.Tokens[idx].UpdatedAt = now
+				result.TokensUpdated++
+			} else {
+				// 添加新的
+				if token.ID == "" {
+					token.ID = generateTokenID()
+				}
+				if token.AuthType == "" {
+					token.AuthType = "Social"
+				}
+				token.CreatedAt = now
+				token.UpdatedAt = now
+				s.data.Tokens = append(s.data.Tokens, token)
+				result.TokensAdded++
+			}
+		}
+
+	default: // "merge"
+		// 合并模式：跳过已存在的（基于 refreshToken）
+		existingTokens := make(map[string]bool)
+		for _, t := range s.data.Tokens {
+			existingTokens[t.RefreshToken] = true
+		}
+
+		for _, token := range data.Tokens {
+			if token.RefreshToken == "" {
+				result.Errors = append(result.Errors, fmt.Sprintf("跳过无效 token: %s", token.Name))
+				result.TokensSkipped++
+				continue
+			}
+
+			if existingTokens[token.RefreshToken] {
+				result.TokensSkipped++
+				continue
+			}
+
+			if token.ID == "" {
+				token.ID = generateTokenID()
+			}
+			if token.AuthType == "" {
+				token.AuthType = "Social"
+			}
+			token.CreatedAt = now
+			token.UpdatedAt = now
+			s.data.Tokens = append(s.data.Tokens, token)
+			result.TokensAdded++
+		}
+	}
+
+	s.saveUnsafe()
+	return result
+}
+
+// ClearAllTokens 清空所有 Token
+func (s *Store) ClearAllTokens() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	count := len(s.data.Tokens)
+	s.data.Tokens = []TokenConfig{}
+	s.saveUnsafe()
+	return count
+}

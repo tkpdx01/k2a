@@ -382,6 +382,133 @@ func handleUploadTokenFile(c *gin.Context) {
 	})
 }
 
+// === 导出/导入 API ===
+
+// handleExportConfig 导出配置
+func handleExportConfig(c *gin.Context) {
+	s := store.GetStore()
+	if s == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "存储未初始化"})
+		return
+	}
+
+	exportData := s.ExportConfig()
+
+	// 检查是否需要下载文件
+	if c.Query("download") == "true" {
+		c.Header("Content-Disposition", "attachment; filename=k2a_config_export.json")
+		c.Header("Content-Type", "application/json")
+	}
+
+	logger.Info("导出配置", logger.Int("tokens_count", exportData.TokensCount), logger.String("ip", c.ClientIP()))
+	c.JSON(http.StatusOK, exportData)
+}
+
+// handleImportConfig 导入配置
+func handleImportConfig(c *gin.Context) {
+	s := store.GetStore()
+	if s == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "存储未初始化"})
+		return
+	}
+
+	// 获取导入模式
+	mode := c.DefaultQuery("mode", "merge")
+	if mode != "merge" && mode != "replace" && mode != "update" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的导入模式，支持: merge, replace, update"})
+		return
+	}
+
+	// 检查是否是文件上传
+	file, err := c.FormFile("file")
+	var content []byte
+
+	if err == nil {
+		// 文件上传模式
+		if file.Size > 1024*1024 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "文件过大，最大 1MB"})
+			return
+		}
+
+		f, err := file.Open()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "打开文件失败"})
+			return
+		}
+		defer f.Close()
+
+		content, err = io.ReadAll(f)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取文件失败"})
+			return
+		}
+	} else {
+		// JSON body 模式
+		content, err = io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败"})
+			return
+		}
+	}
+
+	// 解析导入数据
+	var importData store.ImportData
+	if err := json.Unmarshal(content, &importData); err != nil {
+		// 尝试解析为 token 数组（兼容旧格式）
+		var tokens []store.TokenConfig
+		if err2 := json.Unmarshal(content, &tokens); err2 != nil {
+			// 尝试解析单个 token
+			var single store.TokenConfig
+			if err3 := json.Unmarshal(content, &single); err3 != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "JSON 格式错误"})
+				return
+			}
+			tokens = []store.TokenConfig{single}
+		}
+		importData.Tokens = tokens
+	}
+
+	// 执行导入
+	result := s.ImportConfig(&importData, mode)
+
+	logger.Info("导入配置",
+		logger.String("mode", mode),
+		logger.Int("added", result.TokensAdded),
+		logger.Int("updated", result.TokensUpdated),
+		logger.Int("skipped", result.TokensSkipped),
+		logger.String("ip", c.ClientIP()))
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "导入完成",
+		"mode":    mode,
+		"result":  result,
+	})
+}
+
+// handleClearAllTokens 清空所有 Token
+func handleClearAllTokens(c *gin.Context) {
+	s := store.GetStore()
+	if s == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "存储未初始化"})
+		return
+	}
+
+	// 需要确认参数
+	confirm := c.Query("confirm")
+	if confirm != "yes" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请添加 ?confirm=yes 参数确认清空操作"})
+		return
+	}
+
+	count := s.ClearAllTokens()
+
+	logger.Warn("清空所有 Token", logger.Int("count", count), logger.String("ip", c.ClientIP()))
+	c.JSON(http.StatusOK, gin.H{
+		"message": "已清空所有 Token",
+		"deleted": count,
+	})
+}
+
 // === 辅助函数 ===
 
 // maskToken 隐藏 token 敏感信息
@@ -417,6 +544,11 @@ func RegisterAdminRoutes(r *gin.Engine) {
 		admin.POST("/tokens/:id/toggle", handleToggleToken)
 		admin.POST("/tokens/batch", handleBatchAddTokens)
 		admin.POST("/tokens/upload", handleUploadTokenFile)
+
+		// 导出/导入
+		admin.GET("/export", handleExportConfig)
+		admin.POST("/import", handleImportConfig)
+		admin.DELETE("/tokens/clear", handleClearAllTokens)
 	}
 }
 

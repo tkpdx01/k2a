@@ -101,6 +101,13 @@
     gap: 10px;
     margin-bottom: 20px;
     flex-wrap: wrap;
+    align-items: center;
+}
+
+.action-divider {
+    color: #ccc;
+    margin: 0 5px;
+    font-size: 18px;
 }
 
 /* 按钮样式 */

@@ -66,6 +66,12 @@ class AdminPanel {
             e.preventDefault();
             this.updateToken();
         });
+
+        // 导入表单
+        document.getElementById('importForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.importConfig();
+        });
     }
 
     toggleIdcFields(show, selector) {
@@ -391,6 +397,85 @@ class AdminPanel {
         }
     }
 
+    // === 导出/导入 ===
+
+    async exportConfig() {
+        try {
+            const res = await fetch(`${this.apiBase}/export`);
+            if (!res.ok) {
+                this.showToast('导出失败', 'error');
+                return;
+            }
+
+            const data = await res.json();
+
+            // 创建下载
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `k2a_config_${new Date().toISOString().slice(0, 10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            this.showToast(`导出成功，共 ${data.tokensCount} 个 Token`, 'success');
+        } catch (err) {
+            this.showToast('网络错误', 'error');
+        }
+    }
+
+    async importConfig() {
+        const fileInput = document.getElementById('importFile');
+        const file = fileInput.files[0];
+        const mode = document.getElementById('importMode').value;
+
+        if (!file) {
+            this.showToast('请选择文件', 'error');
+            return;
+        }
+
+        // 替换模式需要确认
+        if (mode === 'replace') {
+            if (!confirm('⚠️ 替换模式将清空所有现有配置！\n\n确定要继续吗？')) {
+                return;
+            }
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const res = await fetch(`${this.apiBase}/import?mode=${mode}`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                closeModal('importModal');
+                document.getElementById('importForm').reset();
+                this.refreshTokens();
+
+                const result = data.result;
+                let msg = `导入完成：添加 ${result.tokensAdded} 个`;
+                if (result.tokensUpdated > 0) {
+                    msg += `，更新 ${result.tokensUpdated} 个`;
+                }
+                if (result.tokensSkipped > 0) {
+                    msg += `，跳过 ${result.tokensSkipped} 个`;
+                }
+                this.showToast(msg, 'success');
+            } else {
+                const data = await res.json();
+                this.showToast(data.error || '导入失败', 'error');
+            }
+        } catch (err) {
+            this.showToast('网络错误', 'error');
+        }
+    }
+
     // === UI 辅助 ===
 
     showLoginView() {
@@ -454,6 +539,15 @@ function showUpload() {
 function showChangePassword() {
     document.getElementById('changePasswordForm').reset();
     showModal('changePasswordModal');
+}
+
+function showImport() {
+    document.getElementById('importForm').reset();
+    showModal('importModal');
+}
+
+function exportConfig() {
+    adminPanel.exportConfig();
 }
 
 function refreshTokens() {
