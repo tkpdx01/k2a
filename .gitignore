@@ -3,6 +3,9 @@ kiro2api
 main
 .env
 
+# 构建输出
+dist/
+
 # Docker 相关文件
 .env.local
 .env.*.local
