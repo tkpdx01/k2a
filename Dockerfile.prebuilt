@@ -2,7 +2,7 @@
 # 构建速度极快，适合 CI/CD 超时的场景
 #
 # 使用方法:
-# 1. 先本地编译: ./build.sh docker
+# 1. 先本地编译: ./build.sh linux
 # 2. 构建镜像: docker build -f Dockerfile.prebuilt -t kiro2api .
 
 FROM alpine:3.19
@@ -16,9 +16,8 @@ RUN addgroup -g 1001 -S appgroup && \
 
 WORKDIR /app
 
-# 自动检测架构并复制对应的二进制文件
-ARG TARGETARCH
-COPY dist/kiro2api-linux-${TARGETARCH:-amd64} ./kiro2api
+# 复制预编译的二进制文件和静态资源
+COPY dist/kiro2api-linux-amd64 ./kiro2api
 COPY dist/static ./static
 
 # 创建数据目录并设置权限
