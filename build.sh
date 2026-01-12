@@ -28,4 +28,4 @@ ls -lh "$OUTPUT_DIR"/kiro2api-*
 echo ""
 echo "📁 Output directory: $OUTPUT_DIR/"
 echo ""
-echo "Next step: docker build -f Dockerfile.prebuilt -t kiro2api ."
+echo "Next step: git add dist/ && git commit && git push"
