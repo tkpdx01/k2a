@@ -329,16 +329,13 @@ class AdminPanel {
     }
 
     async batchAddTokens() {
-        const jsonText = document.getElementById('batchJson').value;
-        let tokens;
+        const text = document.getElementById('batchText').value;
+        const authType = document.getElementById('batchAuthType').value;
 
-        try {
-            tokens = JSON.parse(jsonText);
-            if (!Array.isArray(tokens)) {
-                tokens = [tokens];
-            }
-        } catch {
-            this.showToast('JSON 格式错误', 'error');
+        const tokens = this.extractTokensFromText(text, authType);
+
+        if (tokens.length === 0) {
+            this.showToast('未能提取到有效的 Token', 'error');
             return;
         }
 
@@ -353,6 +350,7 @@ class AdminPanel {
                 const data = await res.json();
                 closeModal('batchAddModal');
                 document.getElementById('batchAddForm').reset();
+                document.getElementById('extractPreview').style.display = 'none';
                 this.refreshTokens();
                 this.showToast(`成功添加 ${data.added} 个 Token`, 'success');
             } else {
@@ -362,6 +360,118 @@ class AdminPanel {
         } catch (err) {
             this.showToast('网络错误', 'error');
         }
+    }
+
+    // 从文本中提取 Token
+    extractTokensFromText(text, defaultAuthType = 'Social') {
+        const tokens = [];
+        const seen = new Set();
+
+        // 1. 尝试解析为 JSON
+        try {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed)) {
+                for (const item of parsed) {
+                    if (item.refreshToken && !seen.has(item.refreshToken)) {
+                        seen.add(item.refreshToken);
+                        tokens.push({
+                            auth: item.auth || defaultAuthType,
+                            refreshToken: item.refreshToken,
+                            clientId: item.clientId || '',
+                            clientSecret: item.clientSecret || ''
+                        });
+                    }
+                }
+                if (tokens.length > 0) return tokens;
+            } else if (parsed.refreshToken) {
+                return [{
+                    auth: parsed.auth || defaultAuthType,
+                    refreshToken: parsed.refreshToken,
+                    clientId: parsed.clientId || '',
+                    clientSecret: parsed.clientSecret || ''
+                }];
+            }
+        } catch {}
+
+        // 2. 提取 "refreshToken": "xxx" 格式
+        const jsonPattern = /"refreshToken"\s*:\s*"([^"]+)"/g;
+        let match;
+        while ((match = jsonPattern.exec(text)) !== null) {
+            const token = match[1];
+            if (this.isValidRefreshToken(token) && !seen.has(token)) {
+                seen.add(token);
+                tokens.push({ auth: defaultAuthType, refreshToken: token });
+            }
+        }
+
+        // 3. 提取 refreshToken: xxx 格式（无引号）
+        const noQuotePattern = /refreshToken[:\s]+([a-zA-Z0-9_-]{20,})/gi;
+        while ((match = noQuotePattern.exec(text)) !== null) {
+            const token = match[1];
+            if (this.isValidRefreshToken(token) && !seen.has(token)) {
+                seen.add(token);
+                tokens.push({ auth: defaultAuthType, refreshToken: token });
+            }
+        }
+
+        // 4. 提取以 aor 开头的 Token（Kiro 特征）
+        const aorPattern = /\b(aor[A-Za-z0-9_-]{30,})/g;
+        while ((match = aorPattern.exec(text)) !== null) {
+            const token = match[1];
+            if (!seen.has(token)) {
+                seen.add(token);
+                tokens.push({ auth: defaultAuthType, refreshToken: token });
+            }
+        }
+
+        // 5. 按行分割，每行作为一个 Token
+        if (tokens.length === 0) {
+            const lines = text.split(/[\n\r]+/);
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (this.isValidRefreshToken(trimmed) && !seen.has(trimmed)) {
+                    seen.add(trimmed);
+                    tokens.push({ auth: defaultAuthType, refreshToken: trimmed });
+                }
+            }
+        }
+
+        return tokens;
+    }
+
+    // 验证是否为有效的 refreshToken
+    isValidRefreshToken(token) {
+        if (!token || typeof token !== 'string') return false;
+        // 至少 20 个字符，只包含字母数字和 _-
+        return /^[a-zA-Z0-9_-]{20,}$/.test(token);
+    }
+
+    // 预览提取结果
+    previewExtract() {
+        const text = document.getElementById('batchText').value;
+        const authType = document.getElementById('batchAuthType').value;
+        const tokens = this.extractTokensFromText(text, authType);
+
+        const preview = document.getElementById('extractPreview');
+        const result = document.getElementById('extractResult');
+
+        if (tokens.length === 0) {
+            result.innerHTML = '<p style="color: #dc3545;">未能提取到有效的 Token</p>';
+        } else {
+            let html = `<p class="token-count">找到 ${tokens.length} 个 Token：</p>`;
+            tokens.slice(0, 10).forEach((t, i) => {
+                const preview = t.refreshToken.length > 50
+                    ? t.refreshToken.substring(0, 25) + '...' + t.refreshToken.substring(t.refreshToken.length - 10)
+                    : t.refreshToken;
+                html += `<div class="token-item">${i + 1}. [${t.auth}] ${preview}</div>`;
+            });
+            if (tokens.length > 10) {
+                html += `<p style="color: #666; font-size: 12px;">... 还有 ${tokens.length - 10} 个</p>`;
+            }
+            result.innerHTML = html;
+        }
+
+        preview.style.display = 'block';
     }
 
     async uploadFile() {
@@ -528,7 +638,12 @@ function showAddToken() {
 
 function showBatchAdd() {
     document.getElementById('batchAddForm').reset();
+    document.getElementById('extractPreview').style.display = 'none';
     showModal('batchAddModal');
+}
+
+function previewExtract() {
+    adminPanel.previewExtract();
 }
 
 function showUpload() {

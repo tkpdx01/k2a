@@ -201,6 +201,41 @@
     overflow-y: auto;
 }
 
+.modal-content.modal-large {
+    max-width: 700px;
+}
+
+.extract-preview {
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 15px;
+    margin-top: 15px;
+}
+
+.extract-preview h4 {
+    margin: 0 0 10px 0;
+    color: #333;
+    font-size: 14px;
+}
+
+.extract-preview .token-item {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    font-family: monospace;
+    font-size: 12px;
+    word-break: break-all;
+}
+
+.extract-preview .token-count {
+    color: #28a745;
+    font-weight: 500;
+    margin-bottom: 10px;
+}
+
 .modal-header {
     display: flex;
     justify-content: space-between;

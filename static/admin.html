@@ -137,19 +137,37 @@
 
     <!-- 批量添加弹窗 -->
     <div id="batchAddModal" class="modal" style="display: none;">
-        <div class="modal-content">
+        <div class="modal-content modal-large">
             <div class="modal-header">
                 <h2>批量添加 Token</h2>
                 <button class="close-btn" onclick="closeModal('batchAddModal')">&times;</button>
             </div>
             <form id="batchAddForm">
                 <div class="form-group">
-                    <label for="batchJson">JSON 数组</label>
-                    <textarea id="batchJson" rows="10" placeholder='[{"auth":"Social","refreshToken":"xxx"},...]' required></textarea>
+                    <label for="batchText">粘贴文本（支持自动提取 refreshToken）</label>
+                    <textarea id="batchText" rows="10" placeholder="支持以下格式：
+1. JSON 数组: [{&quot;auth&quot;:&quot;Social&quot;,&quot;refreshToken&quot;:&quot;xxx&quot;}]
+2. 纯 Token（每行一个）
+3. 包含 refreshToken 的任意文本（自动提取）
+4. AWS SSO 缓存文件内容
+
+系统会自动识别并提取有效的 refreshToken" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="batchAuthType">默认认证类型</label>
+                    <select id="batchAuthType">
+                        <option value="Social">Social（默认）</option>
+                        <option value="IdC">IdC</option>
+                    </select>
+                </div>
+                <div id="extractPreview" class="extract-preview" style="display: none;">
+                    <h4>提取预览</h4>
+                    <div id="extractResult"></div>
                 </div>
                 <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="previewExtract()">预览提取</button>
                     <button type="button" class="btn btn-secondary" onclick="closeModal('batchAddModal')">取消</button>
-                    <button type="submit" class="btn btn-primary">批量添加</button>
+                    <button type="submit" class="btn btn-primary">添加</button>
                 </div>
             </form>
         </div>
