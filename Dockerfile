@@ -1,7 +1,7 @@
 # 预编译版 Dockerfile - 使用静态编译的二进制文件
 # 无需安装任何依赖，构建速度极快
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM busybox:1.36-glibc
 
 WORKDIR /app
 
@@ -9,8 +9,10 @@ WORKDIR /app
 COPY dist/kiro2api-linux-amd64 /app/kiro2api
 COPY static /app/static
 
-# distroless 镜像默认使用 nonroot 用户 (uid 65532)
+# 创建数据目录并设置权限
+RUN mkdir -p /app/data && \
+    chmod +x /app/kiro2api
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/kiro2api"]
+CMD ["/app/kiro2api"]
