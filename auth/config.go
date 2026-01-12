@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"kiro2api/logger"
+	"kiro2api/store"
 )
 
 // AuthConfig 简化的认证配置
@@ -23,8 +24,49 @@ const (
 	AuthMethodIdC    = "IdC"
 )
 
-// loadConfigs 从环境变量加载配置
+// loadConfigs 从环境变量或 store 加载配置
 func loadConfigs() ([]AuthConfig, error) {
+	var allConfigs []AuthConfig
+
+	// 1. 尝试从 store 加载（Web 管理添加的 Token）
+	if s := store.GetStore(); s != nil {
+		storeTokens := s.GetEnabledTokens()
+		for _, t := range storeTokens {
+			config := AuthConfig{
+				AuthType:     t.AuthType,
+				RefreshToken: t.RefreshToken,
+				ClientID:     t.ClientID,
+				ClientSecret: t.ClientSecret,
+				Disabled:     t.Disabled,
+			}
+			allConfigs = append(allConfigs, config)
+		}
+		if len(storeTokens) > 0 {
+			logger.Info("从管理存储加载认证配置", logger.Int("数量", len(storeTokens)))
+		}
+	}
+
+	// 2. 从环境变量加载（向后兼容）
+	envConfigs, err := loadConfigsFromEnv()
+	if err == nil && len(envConfigs) > 0 {
+		allConfigs = append(allConfigs, envConfigs...)
+		logger.Info("从环境变量加载认证配置", logger.Int("数量", len(envConfigs)))
+	}
+
+	// 3. 检查是否有有效配置
+	if len(allConfigs) == 0 {
+		return nil, fmt.Errorf("未找到有效的认证配置\n" +
+			"请通过以下方式之一配置:\n" +
+			"1. 访问 /admin 页面添加 Token\n" +
+			"2. 设置环境变量 KIRO_AUTH_TOKEN")
+	}
+
+	logger.Info("认证配置加载完成", logger.Int("总数", len(allConfigs)))
+	return allConfigs, nil
+}
+
+// loadConfigsFromEnv 从环境变量加载配置
+func loadConfigsFromEnv() ([]AuthConfig, error) {
 	// 检测并警告弃用的环境变量
 	deprecatedVars := []string{
 		"REFRESH_TOKEN",
@@ -46,11 +88,7 @@ func loadConfigs() ([]AuthConfig, error) {
 	// 只支持KIRO_AUTH_TOKEN的JSON格式（支持文件路径或JSON字符串）
 	jsonData := os.Getenv("KIRO_AUTH_TOKEN")
 	if jsonData == "" {
-		return nil, fmt.Errorf("未找到KIRO_AUTH_TOKEN环境变量\n" +
-			"请设置: KIRO_AUTH_TOKEN='[{\"auth\":\"Social\",\"refreshToken\":\"your_token\"}]'\n" +
-			"或设置为配置文件路径: KIRO_AUTH_TOKEN=/path/to/config.json\n" +
-			"支持的认证方式: Social, IdC\n" +
-			"详细配置请参考: .env.example")
+		return nil, nil // 环境变量未设置，返回空
 	}
 
 	// 优先尝试从文件加载，失败后再作为JSON字符串处理
@@ -72,28 +110,10 @@ func loadConfigs() ([]AuthConfig, error) {
 	// 解析JSON配置
 	configs, err := parseJSONConfig(configData)
 	if err != nil {
-		return nil, fmt.Errorf("解析KIRO_AUTH_TOKEN失败: %w\n"+
-			"请检查JSON格式是否正确\n"+
-			"示例: KIRO_AUTH_TOKEN='[{\"auth\":\"Social\",\"refreshToken\":\"token1\"}]'", err)
+		return nil, fmt.Errorf("解析KIRO_AUTH_TOKEN失败: %w", err)
 	}
 
-	if len(configs) == 0 {
-		return nil, fmt.Errorf("KIRO_AUTH_TOKEN配置为空，请至少提供一个有效的认证配置")
-	}
-
-	validConfigs := processConfigs(configs)
-	if len(validConfigs) == 0 {
-		return nil, fmt.Errorf("没有有效的认证配置\n" +
-			"请检查: \n" +
-			"1. Social认证需要refreshToken字段\n" +
-			"2. IdC认证需要refreshToken、clientId、clientSecret字段")
-	}
-
-	logger.Info("成功加载认证配置",
-		logger.Int("总配置数", len(configs)),
-		logger.Int("有效配置数", len(validConfigs)))
-
-	return validConfigs, nil
+	return processConfigs(configs), nil
 }
 
 // GetConfigs 公开的配置获取函数，供其他包调用

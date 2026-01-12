@@ -26,6 +26,17 @@ func main() {
 		logger.String("config_level", os.Getenv("LOG_LEVEL")),
 		logger.String("config_file", os.Getenv("LOG_FILE")))
 
+	// 初始化管理存储
+	dataDir := os.Getenv("K2A_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "./data"
+	}
+	if err := server.InitAdminStore(dataDir); err != nil {
+		logger.Warn("管理存储初始化失败，Web管理功能不可用", logger.Err(err))
+	} else {
+		logger.Info("管理存储初始化成功", logger.String("data_dir", dataDir))
+	}
+
 	// 初始化代理池（如果配置了代理）
 	initProxyPool()
 

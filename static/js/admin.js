@@ -1,0 +1,471 @@
+/**
+ * K2A 管理面板 - 前端控制器
+ */
+
+class AdminPanel {
+    constructor() {
+        this.apiBase = '/api/admin';
+        this.init();
+    }
+
+    async init() {
+        // 检查登录状态
+        const loggedIn = await this.checkLoginStatus();
+        if (loggedIn) {
+            this.showAdminView();
+            this.refreshTokens();
+        } else {
+            this.showLoginView();
+        }
+
+        this.bindEvents();
+    }
+
+    bindEvents() {
+        // 登录表单
+        document.getElementById('loginForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.login();
+        });
+
+        // 添加 Token 表单
+        document.getElementById('addTokenForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.addToken();
+        });
+
+        // 认证类型切换
+        document.getElementById('authType').addEventListener('change', (e) => {
+            this.toggleIdcFields(e.target.value === 'IdC', '.idc-fields');
+        });
+
+        document.getElementById('editAuthType').addEventListener('change', (e) => {
+            this.toggleIdcFields(e.target.value === 'IdC', '.edit-idc-fields');
+        });
+
+        // 批量添加表单
+        document.getElementById('batchAddForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.batchAddTokens();
+        });
+
+        // 上传表单
+        document.getElementById('uploadForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.uploadFile();
+        });
+
+        // 修改密码表单
+        document.getElementById('changePasswordForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.changePassword();
+        });
+
+        // 编辑 Token 表单
+        document.getElementById('editTokenForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.updateToken();
+        });
+    }
+
+    toggleIdcFields(show, selector) {
+        document.querySelectorAll(selector).forEach(el => {
+            el.style.display = show ? 'block' : 'none';
+        });
+    }
+
+    // === 认证相关 ===
+
+    async checkLoginStatus() {
+        try {
+            const res = await fetch(`${this.apiBase}/status`);
+            const data = await res.json();
+            return data.logged_in;
+        } catch {
+            return false;
+        }
+    }
+
+    async login() {
+        const password = document.getElementById('password').value;
+        try {
+            const res = await fetch(`${this.apiBase}/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password })
+            });
+
+            if (res.ok) {
+                this.showAdminView();
+                this.refreshTokens();
+                this.showToast('登录成功', 'success');
+            } else {
+                const data = await res.json();
+                this.showToast(data.error || '登录失败', 'error');
+            }
+        } catch (err) {
+            this.showToast('网络错误', 'error');
+        }
+    }
+
+    async logout() {
+        try {
+            await fetch(`${this.apiBase}/logout`, { method: 'POST' });
+        } catch {}
+        this.showLoginView();
+        this.showToast('已退出登录', 'info');
+    }
+
+    async changePassword() {
+        const oldPassword = document.getElementById('oldPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const confirmPassword = document.getElementById('confirmPassword').value;
+
+        if (newPassword !== confirmPassword) {
+            this.showToast('两次输入的密码不一致', 'error');
+            return;
+        }
+
+        try {
+            const res = await fetch(`${this.apiBase}/change-password`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
+            });
+
+            if (res.ok) {
+                closeModal('changePasswordModal');
+                document.getElementById('changePasswordForm').reset();
+                this.showToast('密码修改成功', 'success');
+            } else {
+                const data = await res.json();
+                this.showToast(data.error || '修改失败', 'error');
+            }
+        } catch (err) {
+            this.showToast('网络错误', 'error');
+        }
+    }
+
+    // === Token 管理 ===
+
+    async refreshTokens() {
+        try {
+            const res = await fetch(`${this.apiBase}/tokens`);
+            if (res.status === 401) {
+                this.showLoginView();
+                return;
+            }
+
+            const data = await res.json();
+            this.renderTokens(data.tokens || []);
+            this.updateStats(data.stats || {});
+        } catch (err) {
+            this.showToast('加载失败', 'error');
+        }
+    }
+
+    renderTokens(tokens) {
+        const tbody = document.getElementById('tokenTableBody');
+
+        if (tokens.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="loading">暂无 Token</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = tokens.map(token => `
+            <tr>
+                <td>${token.name || '-'}</td>
+                <td>${token.auth || 'Social'}</td>
+                <td><span class="token-preview">${token.refreshToken || '-'}</span></td>
+                <td>${token.userEmail || '-'}</td>
+                <td>${token.remainingUsage >= 0 ? token.remainingUsage : '-'}</td>
+                <td>${this.formatDate(token.lastUsed)}</td>
+                <td>
+                    <span class="status-badge ${token.disabled ? 'status-disabled' : 'status-enabled'}">
+                        ${token.disabled ? '禁用' : '启用'}
+                    </span>
+                </td>
+                <td>
+                    <div class="action-btns">
+                        <button class="btn btn-sm btn-secondary" onclick="adminPanel.editToken('${token.id}')">编辑</button>
+                        <button class="btn btn-sm ${token.disabled ? 'btn-success' : 'btn-warning'}"
+                                onclick="adminPanel.toggleToken('${token.id}')">
+                            ${token.disabled ? '启用' : '禁用'}
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="adminPanel.deleteToken('${token.id}')">删除</button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    updateStats(stats) {
+        document.getElementById('statTotal').textContent = stats.total || 0;
+        document.getElementById('statEnabled').textContent = stats.enabled || 0;
+        document.getElementById('statDisabled').textContent = stats.disabled || 0;
+        document.getElementById('statSocial').textContent = stats.social || 0;
+        document.getElementById('statIdc').textContent = stats.idc || 0;
+    }
+
+    async addToken() {
+        const token = {
+            name: document.getElementById('tokenName').value,
+            auth: document.getElementById('authType').value,
+            refreshToken: document.getElementById('refreshToken').value,
+            clientId: document.getElementById('clientId').value,
+            clientSecret: document.getElementById('clientSecret').value
+        };
+
+        try {
+            const res = await fetch(`${this.apiBase}/tokens`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(token)
+            });
+
+            if (res.ok) {
+                closeModal('addTokenModal');
+                document.getElementById('addTokenForm').reset();
+                this.refreshTokens();
+                this.showToast('添加成功', 'success');
+            } else {
+                const data = await res.json();
+                this.showToast(data.error || '添加失败', 'error');
+            }
+        } catch (err) {
+            this.showToast('网络错误', 'error');
+        }
+    }
+
+    async editToken(id) {
+        try {
+            const res = await fetch(`${this.apiBase}/tokens/${id}`);
+            if (!res.ok) {
+                this.showToast('获取 Token 失败', 'error');
+                return;
+            }
+
+            const token = await res.json();
+            document.getElementById('editTokenId').value = token.id;
+            document.getElementById('editTokenName').value = token.name || '';
+            document.getElementById('editAuthType').value = token.auth || 'Social';
+            document.getElementById('editRefreshToken').value = '';
+            document.getElementById('editClientId').value = token.clientId || '';
+            document.getElementById('editClientSecret').value = '';
+
+            this.toggleIdcFields(token.auth === 'IdC', '.edit-idc-fields');
+            showModal('editTokenModal');
+        } catch (err) {
+            this.showToast('网络错误', 'error');
+        }
+    }
+
+    async updateToken() {
+        const id = document.getElementById('editTokenId').value;
+        const token = {
+            name: document.getElementById('editTokenName').value,
+            auth: document.getElementById('editAuthType').value,
+            refreshToken: document.getElementById('editRefreshToken').value,
+            clientId: document.getElementById('editClientId').value,
+            clientSecret: document.getElementById('editClientSecret').value
+        };
+
+        try {
+            const res = await fetch(`${this.apiBase}/tokens/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(token)
+            });
+
+            if (res.ok) {
+                closeModal('editTokenModal');
+                this.refreshTokens();
+                this.showToast('更新成功', 'success');
+            } else {
+                const data = await res.json();
+                this.showToast(data.error || '更新失败', 'error');
+            }
+        } catch (err) {
+            this.showToast('网络错误', 'error');
+        }
+    }
+
+    async toggleToken(id) {
+        try {
+            const res = await fetch(`${this.apiBase}/tokens/${id}/toggle`, { method: 'POST' });
+            if (res.ok) {
+                this.refreshTokens();
+                this.showToast('状态已切换', 'success');
+            } else {
+                const data = await res.json();
+                this.showToast(data.error || '操作失败', 'error');
+            }
+        } catch (err) {
+            this.showToast('网络错误', 'error');
+        }
+    }
+
+    async deleteToken(id) {
+        if (!confirm('确定要删除这个 Token 吗？')) return;
+
+        try {
+            const res = await fetch(`${this.apiBase}/tokens/${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                this.refreshTokens();
+                this.showToast('删除成功', 'success');
+            } else {
+                const data = await res.json();
+                this.showToast(data.error || '删除失败', 'error');
+            }
+        } catch (err) {
+            this.showToast('网络错误', 'error');
+        }
+    }
+
+    async batchAddTokens() {
+        const jsonText = document.getElementById('batchJson').value;
+        let tokens;
+
+        try {
+            tokens = JSON.parse(jsonText);
+            if (!Array.isArray(tokens)) {
+                tokens = [tokens];
+            }
+        } catch {
+            this.showToast('JSON 格式错误', 'error');
+            return;
+        }
+
+        try {
+            const res = await fetch(`${this.apiBase}/tokens/batch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tokens })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                closeModal('batchAddModal');
+                document.getElementById('batchAddForm').reset();
+                this.refreshTokens();
+                this.showToast(`成功添加 ${data.added} 个 Token`, 'success');
+            } else {
+                const data = await res.json();
+                this.showToast(data.error || '批量添加失败', 'error');
+            }
+        } catch (err) {
+            this.showToast('网络错误', 'error');
+        }
+    }
+
+    async uploadFile() {
+        const fileInput = document.getElementById('uploadFile');
+        const file = fileInput.files[0];
+
+        if (!file) {
+            this.showToast('请选择文件', 'error');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const res = await fetch(`${this.apiBase}/tokens/upload`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                closeModal('uploadModal');
+                document.getElementById('uploadForm').reset();
+                this.refreshTokens();
+                this.showToast(`成功添加 ${data.added} 个 Token`, 'success');
+            } else {
+                const data = await res.json();
+                this.showToast(data.error || '上传失败', 'error');
+            }
+        } catch (err) {
+            this.showToast('网络错误', 'error');
+        }
+    }
+
+    // === UI 辅助 ===
+
+    showLoginView() {
+        document.getElementById('loginView').style.display = 'flex';
+        document.getElementById('adminView').style.display = 'none';
+        document.getElementById('password').value = '';
+    }
+
+    showAdminView() {
+        document.getElementById('loginView').style.display = 'none';
+        document.getElementById('adminView').style.display = 'block';
+    }
+
+    formatDate(dateStr) {
+        if (!dateStr) return '-';
+        try {
+            const date = new Date(dateStr);
+            return date.toLocaleString('zh-CN', { hour12: false });
+        } catch {
+            return '-';
+        }
+    }
+
+    showToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+
+        setTimeout(() => {
+            toast.remove();
+        }, 3000);
+    }
+}
+
+// 全局函数
+function showModal(id) {
+    document.getElementById(id).style.display = 'flex';
+}
+
+function closeModal(id) {
+    document.getElementById(id).style.display = 'none';
+}
+
+function showAddToken() {
+    document.getElementById('addTokenForm').reset();
+    adminPanel.toggleIdcFields(false, '.idc-fields');
+    showModal('addTokenModal');
+}
+
+function showBatchAdd() {
+    document.getElementById('batchAddForm').reset();
+    showModal('batchAddModal');
+}
+
+function showUpload() {
+    document.getElementById('uploadForm').reset();
+    showModal('uploadModal');
+}
+
+function showChangePassword() {
+    document.getElementById('changePasswordForm').reset();
+    showModal('changePasswordModal');
+}
+
+function refreshTokens() {
+    adminPanel.refreshTokens();
+}
+
+function logout() {
+    adminPanel.logout();
+}
+
+// 初始化
+let adminPanel;
+document.addEventListener('DOMContentLoaded', () => {
+    adminPanel = new AdminPanel();
+});

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>K2A 管理面板</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/admin.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 登录界面 -->
+        <div id="loginView" class="login-view">
+            <div class="login-card">
+                <h1>🔐 K2A 管理面板</h1>
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label for="password">管理员密码</label>
+                        <input type="password" id="password" placeholder="请输入密码" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">登录</button>
+                    <p class="login-hint">默认密码: admin（首次登录请修改）</p>
+                </form>
+            </div>
+        </div>
+
+        <!-- 管理界面 -->
+        <div id="adminView" class="admin-view" style="display: none;">
+            <div class="header">
+                <h1>🔐 K2A Token 管理</h1>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" onclick="showChangePassword()">修改密码</button>
+                    <button class="btn btn-danger" onclick="logout()">退出登录</button>
+                </div>
+            </div>
+
+            <!-- 统计信息 -->
+            <div class="stats-bar">
+                <div class="stat-item">
+                    <span class="stat-label">总数</span>
+                    <span class="stat-value" id="statTotal">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">启用</span>
+                    <span class="stat-value stat-enabled" id="statEnabled">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">禁用</span>
+                    <span class="stat-value stat-disabled" id="statDisabled">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Social</span>
+                    <span class="stat-value" id="statSocial">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">IdC</span>
+                    <span class="stat-value" id="statIdc">0</span>
+                </div>
+            </div>
+
+            <!-- 操作栏 -->
+            <div class="action-bar">
+                <button class="btn btn-primary" onclick="showAddToken()">➕ 添加 Token</button>
+                <button class="btn btn-secondary" onclick="showBatchAdd()">📦 批量添加</button>
+                <button class="btn btn-secondary" onclick="showUpload()">📁 上传文件</button>
+                <button class="btn btn-secondary" onclick="refreshTokens()">🔄 刷新</button>
+            </div>
+
+            <!-- Token 列表 -->
+            <div class="main-card">
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>名称</th>
+                                <th>认证类型</th>
+                                <th>Token 预览</th>
+                                <th>用户邮箱</th>
+                                <th>剩余次数</th>
+                                <th>最后使用</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tokenTableBody">
+                            <tr>
+                                <td colspan="8" class="loading">加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加 Token 弹窗 -->
+    <div id="addTokenModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>添加 Token</h2>
+                <button class="close-btn" onclick="closeModal('addTokenModal')">&times;</button>
+            </div>
+            <form id="addTokenForm">
+                <div class="form-group">
+                    <label for="tokenName">名称（可选）</label>
+                    <input type="text" id="tokenName" placeholder="便于识别的名称">
+                </div>
+                <div class="form-group">
+                    <label for="authType">认证类型</label>
+                    <select id="authType">
+                        <option value="Social">Social</option>
+                        <option value="IdC">IdC</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="refreshToken">Refresh Token *</label>
+                    <textarea id="refreshToken" rows="3" placeholder="必填" required></textarea>
+                </div>
+                <div class="form-group idc-fields" style="display: none;">
+                    <label for="clientId">Client ID</label>
+                    <input type="text" id="clientId" placeholder="IdC 认证需要">
+                </div>
+                <div class="form-group idc-fields" style="display: none;">
+                    <label for="clientSecret">Client Secret</label>
+                    <input type="text" id="clientSecret" placeholder="IdC 认证需要">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('addTokenModal')">取消</button>
+                    <button type="submit" class="btn btn-primary">添加</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 批量添加弹窗 -->
+    <div id="batchAddModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>批量添加 Token</h2>
+                <button class="close-btn" onclick="closeModal('batchAddModal')">&times;</button>
+            </div>
+            <form id="batchAddForm">
+                <div class="form-group">
+                    <label for="batchJson">JSON 数组</label>
+                    <textarea id="batchJson" rows="10" placeholder='[{"auth":"Social","refreshToken":"xxx"},...]' required></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('batchAddModal')">取消</button>
+                    <button type="submit" class="btn btn-primary">批量添加</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 上传文件弹窗 -->
+    <div id="uploadModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>上传配置文件</h2>
+                <button class="close-btn" onclick="closeModal('uploadModal')">&times;</button>
+            </div>
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="uploadFile">选择 JSON 文件</label>
+                    <input type="file" id="uploadFile" accept=".json" required>
+                    <p class="form-hint">支持单个 Token 或 Token 数组的 JSON 文件</p>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('uploadModal')">取消</button>
+                    <button type="submit" class="btn btn-primary">上传</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 修改密码弹窗 -->
+    <div id="changePasswordModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>修改密码</h2>
+                <button class="close-btn" onclick="closeModal('changePasswordModal')">&times;</button>
+            </div>
+            <form id="changePasswordForm">
+                <div class="form-group">
+                    <label for="oldPassword">原密码</label>
+                    <input type="password" id="oldPassword" required>
+                </div>
+                <div class="form-group">
+                    <label for="newPassword">新密码</label>
+                    <input type="password" id="newPassword" minlength="6" required>
+                </div>
+                <div class="form-group">
+                    <label for="confirmPassword">确认新密码</label>
+                    <input type="password" id="confirmPassword" minlength="6" required>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('changePasswordModal')">取消</button>
+                    <button type="submit" class="btn btn-primary">修改</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 编辑 Token 弹窗 -->
+    <div id="editTokenModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>编辑 Token</h2>
+                <button class="close-btn" onclick="closeModal('editTokenModal')">&times;</button>
+            </div>
+            <form id="editTokenForm">
+                <input type="hidden" id="editTokenId">
+                <div class="form-group">
+                    <label for="editTokenName">名称</label>
+                    <input type="text" id="editTokenName">
+                </div>
+                <div class="form-group">
+                    <label for="editAuthType">认证类型</label>
+                    <select id="editAuthType">
+                        <option value="Social">Social</option>
+                        <option value="IdC">IdC</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="editRefreshToken">Refresh Token</label>
+                    <textarea id="editRefreshToken" rows="3" placeholder="留空则不修改"></textarea>
+                </div>
+                <div class="form-group edit-idc-fields" style="display: none;">
+                    <label for="editClientId">Client ID</label>
+                    <input type="text" id="editClientId">
+                </div>
+                <div class="form-group edit-idc-fields" style="display: none;">
+                    <label for="editClientSecret">Client Secret</label>
+                    <input type="text" id="editClientSecret">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('editTokenModal')">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/static/js/admin.js"></script>
+</body>
+</html>

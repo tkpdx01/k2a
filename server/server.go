@@ -48,6 +48,12 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 	r.GET("/", func(c *gin.Context) {
 		c.File("./static/index.html")
 	})
+	r.GET("/admin", func(c *gin.Context) {
+		c.File("./static/admin.html")
+	})
+
+	// 注册管理路由
+	RegisterAdminRoutes(r)
 
 	// API端点 - 纯数据服务
 	r.GET("/api/tokens", handleTokenPoolAPI)
