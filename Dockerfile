@@ -1,14 +1,17 @@
 # 预编译版 Dockerfile - 直接使用仓库中的二进制文件
 # 构建速度极快，适合 Zeabur 等云平台
 
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
 # 安装运行时依赖
-RUN apk --no-cache add ca-certificates tzdata
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
 # 创建非 root 用户
-RUN addgroup -g 1001 -S appgroup && \
-    adduser -u 1001 -S appuser -G appgroup
+RUN groupadd -g 1001 appgroup && \
+    useradd -u 1001 -g appgroup -m appuser
 
 WORKDIR /app
 
